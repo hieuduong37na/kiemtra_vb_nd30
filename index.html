@@ -282,8 +282,10 @@ function analyze(text){
   const endPunct = (l, want, msg, note) => { const t = l.t.trimEnd(); if (!t.trim()) return false; const lc = t[t.length - 1]; if (lc === want || lc === ':') return false;
     const p = l.s + t.length - 1;
     const ok = add({sev:'warn',cat:'Thể thức',msg,start:p,end:p+1,fix:/[.,;]/.test(lc) ? want : lc + want,note}); if (ok) nPunct++; return ok; };
-  const dashFix = l => { const m = /^([ \t]*)([-–—•*+]?)/.exec(l.t); if (m[2] === '-') return false; const p = l.s + m[1].length, ch = l.t[m[1].length] || '';
-    return add({sev:'warn',cat:'Thể thức',msg:'Đầu dòng dùng gạch ngang (-).',note:'Phụ lục I, NĐ 30: các nơi nhận, nơi gửi trình bày theo từng dòng, đầu dòng là dấu gạch ngang (-).',start:p,end:p+1,fix:m[2] ? '-' : '- ' + ch}); };
+  const dashFix = l => { const m = /^([ \t]*)([-–—•*+]?)([ \t]*)/.exec(l.t), p = l.s + m[1].length;
+    if (m[2] === '-' && m[3].length) return false;
+    const nx = l.t[m[1].length + m[2].length] || '', two = m[2] === '-';
+    return add({sev:'warn',cat:'Thể thức',msg:two ? 'Sau gạch đầu dòng (-) phải có một dấu cách.' : 'Đầu dòng dùng gạch ngang và dấu cách: “- ”.',note:'Phụ lục I, NĐ 30: các nơi nhận, nơi gửi trình bày theo từng dòng, đầu dòng là dấu gạch ngang (-).',start:p,end:p+(m[2] ? 1 : 1)+(two ? 1 : 0),fix:two ? '- ' + nx : m[2] ? (m[3].length ? '-' : '- ') : '- ' + nx}); };
   if (!text.trim()) return {issues, checks};
 
   const L = lineInfo(text);
@@ -337,7 +339,7 @@ function analyze(text){
   }
   // 3b. Tên cơ quan viết chưa in hoa
   { const si2 = Sl.search(/(?<![a-z0-9])s[o]\s*[:;.]?\s*\d/i);
-    const end2 = si2 > -1 && si2 < headEnd ? si2 : headEnd; let bad2 = 0;
+    const kgp2 = Sl.search(/kinh\s+g[uo]i/i), end2 = Math.min(si2 > -1 && si2 < headEnd ? si2 : headEnd, kgp2 > -1 ? kgp2 : Infinity); let bad2 = 0;
     for (const l of L) { if (l.s >= end2) break; const t = l.t.trim();
       if (!t || t.length > 60 || /[.;:,]$/.test(t)) continue;
       if (/^(Bệnh viện|Khoa|Phòng|Trường|Sở|Ủy ban|Bộ|Viện|Trung tâm|Công ty|Ban|Hội đồng|Chi cục|Cục|Tổng cục)(?![\p{L}])/iu.test(t) && /\p{Ll}/u.test(t)) {
@@ -367,7 +369,7 @@ function analyze(text){
         add({sev:'warn',cat:'Thể thức',msg:'Ký hiệu “'+ky+'” chưa đúng cấu trúc (chữ viết tắt in hoa, nối bằng gạch ngang).',start:m.index,end:m.index+m[0].length});
         chk('Số, ký hiệu','warn','Ký hiệu chưa đúng cấu trúc.');
       } else chk('Số, ký hiệu','ok','Đúng.');
-    } else if (/S[ốo]\s*[:：]?\s*(?:[….]{2,}|_{2,})/iu.test(head)) {
+    } else if (/S[ốo]\s*[:：]?\s*(?:[….]{2,}|_{2,}|(?=\/))/iu.test(head)) {
       chk('Số, ký hiệu','info','Còn để trống, nhớ điền trước khi ban hành.');
     } else { chk('Số, ký hiệu','error','Không thấy “Số: …/…”.');
       add({sev:'error',cat:'Thể thức',msg:'Thiếu số, ký hiệu văn bản.',note:'Ví dụ: Số: 05/CV-TCHC'}); }
@@ -458,14 +460,22 @@ function analyze(text){
         if (!t || t.length > 90 || (rest && !mk) || (items.length && mkR.test(L[items[0]].t.trim()) && !mk)) break;
         items.push(j); if (!mk && /\.$/.test(t)) break;
       }
-      if (rest && items.length) { if (add({sev:'info',cat:'Thể thức',msg:'Gửi nhiều nơi: xuống dòng sau “Kính gửi:”, mỗi nơi một dòng.',note:'Mẫu: Kính gửi: / - Bộ Nội vụ; / - Bộ Tài chính. (Phụ lục I, NĐ 30)',start:kg.index,end:kg.index+kg[0].length})) bad++; }
+      const chain = [];
+      if (rest && /[;,]$/.test(rest)) for (let j = ki + 1; j < L.length; j++) { const t = L[j].t.trim(); if (!t || t.length > 90) break; chain.push(j); if (/\.$/.test(t)) break; }
+      if (rest && chain.length) {
+        const gs = kg.index + kg[0].length, sg = text.slice(gs, kl.e), rp = gs + sg.length - sg.trimStart().length;
+        if (add({sev:'warn',cat:'Thể thức',msg:'Gửi nhiều nơi: “Kính gửi:” và tên các cơ quan không viết trên cùng một dòng.',note:'Xuống dòng sau “Kính gửi:”. Mỗi cơ quan một dòng, đầu dòng có gạch ngang (-), cuối dòng có “;”, dòng cuối có “.”. (Phụ lục I, NĐ 30)',start:gs,end:rp+1,fix:'\n- ' + text[rp]})) bad++;
+        const all = [ki].concat(chain); all.forEach(j => skipL.add(j));
+        chain.forEach(j => { if (dashFix(L[j])) bad++; });
+        all.forEach((j, k) => endPunct(L[j], k === all.length - 1 ? '.' : ';', k === all.length - 1 ? 'Nơi nhận cuối cùng sau “Kính gửi” phải kết thúc bằng dấu chấm (.).' : 'Cuối mỗi dòng sau “Kính gửi” phải có dấu chấm phẩy (;).', 'Phụ lục I, NĐ 30, mục Kính gửi (gửi nhiều nơi).'));
+        bad += nPunct - n0;
+      } else if (rest && items.length) { if (add({sev:'warn',cat:'Thể thức',msg:'Gửi nhiều nơi: “Kính gửi:” và tên các cơ quan không viết trên cùng một dòng.',note:'Mẫu: Kính gửi: / - Bộ Nội vụ; / - Bộ Tài chính. (Phụ lục I, NĐ 30)',start:kg.index,end:kg.index+kg[0].length})) bad++; }
       else if (!rest && items.length >= 2) {
         items.forEach((j, k) => { skipL.add(j); if (dashFix(L[j])) bad++;
           endPunct(L[j], k === items.length - 1 ? '.' : ';', k === items.length - 1 ? 'Nơi nhận cuối cùng sau “Kính gửi” phải kết thúc bằng dấu chấm (.).' : 'Cuối mỗi dòng sau “Kính gửi” phải có dấu chấm phẩy (;).', 'Phụ lục I, NĐ 30, mục Kính gửi (gửi nhiều nơi).'); });
         bad += nPunct - n0;
-      } else if (rest && !items.length && /[;.]$/.test(rest)) {
-        const p = kl.s + kl.t.trimEnd().length - 1;
-        if (add({sev:'info',cat:'Thể thức',msg:'Kính gửi một nơi: cuối dòng không có dấu câu.',note:'Mẫu: Kính gửi: Bộ Nội vụ (Phụ lục I, NĐ 30).',start:p,end:p+1,fix:''})) bad++;
+      } else if (rest && !items.length && (rest.split(';').filter(x => x.trim()).length >= 2 || /^[-–—•*+][ \t]/.test(rest))) {
+        if (add({sev:'warn',cat:'Thể thức',msg:'Gửi nhiều nơi: “Kính gửi:” và tên các cơ quan không viết trên cùng một dòng.',note:'Xuống dòng sau “Kính gửi:”. Mỗi cơ quan một dòng, đầu dòng có gạch ngang (-), cuối dòng có “;”, dòng cuối có “.”. Phần này cần sửa tay vì phải tách dòng.',start:kg.index,end:kg.index+kg[0].length})) bad++;
       }
       if (bad) { const c = checks.find(c => c.label === 'Kính gửi'); if (c && c.status === 'ok') { c.status = 'warn'; c.note = 'Danh sách nơi nhận: gạch đầu dòng, “;” cuối dòng, dòng cuối “.”.'; } }
     }
@@ -564,6 +574,9 @@ function analyze(text){
       add({sev:'warn',cat:'Dấu câu',msg:'Thiếu dấu cách sau dấu chấm.',start:m.index,end:m.index+1,fix:'. '}); }
     re = /(?<=\S)([^\S\n\t\r]{2,})(?=\S)/g;
     while ((m = re.exec(text))) { const n = m[1].length;
+      // Cố ý để trống để điền tay: “ngày    tháng    năm”, “Số:    /QĐ”
+      { const bf = text.slice(Math.max(0, m.index - 8), m.index), af = text.slice(m.index + m[0].length, m.index + m[0].length + 8);
+        if (/(ngày|tháng|năm)$/i.test(bf) || /^(tháng|năm)(?![\p{L}])/iu.test(af) || (/[Ss][ốo]\s*[:：]$/.test(bf) && /^\//.test(af))) continue; }
       add({sev:n >= 5 ? 'warn' : 'info',cat:'Dấu câu',msg:'Thừa dấu cách (' + n + ' dấu cách liên tiếp).',note:n >= 5 ? 'Nếu dùng dấu cách để căn chữ sang phải hoặc vào giữa, hãy dùng Tab hoặc căn lề của Word.' : undefined,start:m.index,end:m.index+m[0].length,fix:' '}); }
     re = /^[^\S\n\t\r]+(?=\S)/gm;
     while ((m = re.exec(text))) add({sev:'warn',cat:'Dấu câu',msg:'Thừa dấu cách ở đầu dòng.',note:'Dùng thụt đầu dòng của Word thay vì gõ dấu cách.',start:m.index,end:m.index+m[0].length,fix:''});
@@ -795,20 +808,25 @@ function trimEdit(old, fix, start){
   return { a: start + p, b: start + old.length - s, oldCore: old.slice(p, old.length - s), fix: fix.slice(p, fix.length - s) };
 }
 function setPreserve(node){ node.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve'); }
+function setNodeText(node, before, fix, after){
+  const parts = (before + fix + after).split('\n'); node.textContent = parts[0]; setPreserve(node);
+  let ref = node;
+  for (let k = 1; k < parts.length; k++) { const d = node.ownerDocument, br = d.createElementNS(W, 'w:br'), t = d.createElementNS(W, 'w:t'); t.textContent = parts[k]; setPreserve(t);
+    ref.parentNode.insertBefore(br, ref.nextSibling); ref.parentNode.insertBefore(t, br.nextSibling); ref = t; }
+}
 function editPara(segs, a, b, fix){
   let pos = 0;
   for (const s of segs) { const s0 = pos, s1 = pos + s.len; pos = s1; if (!s.node && s.kind !== 'tab' && a < s1 && b > s0) return false; }
   pos = 0; let first = true;
   for (const s of segs) {
     const s0 = pos, s1 = pos + s.len; pos = s1;
-    if (a === b) { if (first && s.node && a >= s0 && a <= s1) { s.node.textContent = s.text.slice(0, a - s0) + fix + s.text.slice(a - s0); setPreserve(s.node); return true; } continue; }
+    if (a === b) { if (first && s.node && a >= s0 && a <= s1) { setNodeText(s.node, s.text.slice(0, a - s0), fix, s.text.slice(a - s0)); return true; } continue; }
     if (b <= s0 || a >= s1) continue;
     if (s.node) {
       const ls = Math.max(a, s0) - s0, le = Math.min(b, s1) - s0;
-      s.node.textContent = s.text.slice(0, ls) + (first ? fix : '') + s.text.slice(le);
-      setPreserve(s.node); first = false;
+      setNodeText(s.node, s.text.slice(0, ls), first ? fix : '', s.text.slice(le)); first = false;
     } else {
-      if (first && fix) { const t = s.el.ownerDocument.createElementNS(W, 'w:t'); t.textContent = fix; setPreserve(t); s.el.parentNode.insertBefore(t, s.el); }
+      if (first && fix) { const t = s.el.ownerDocument.createElementNS(W, 'w:t'); s.el.parentNode.insertBefore(t, s.el); setNodeText(t, '', fix, ''); }
       s.el.remove(); first = false;
     }
   }
@@ -823,6 +841,20 @@ function docEdit(a, b, fix){
   }
   return false;
 }
+function fixKgIndent(){
+  const plist = st.doc.plist, tx = p => segsOf(p).map(s => s.text).join('');
+  const pk = plist.findIndex(p => /^\s*Kính\s+gửi\s*[:：]/i.test(tx(p))); if (pk < 0) return 0;
+  const idx = [pk];
+  for (let j = pk + 1; j < plist.length; j++) { const t = tx(plist[j]).trim(); if (!t || t.length > 90 || !/^[-–—•]/.test(t)) break; idx.push(j); }
+  const inner = /\n\s*[-–—•]/.test(tx(plist[pk])); if (idx.length < 2 && !inner) return 0;
+  const cnt = {}; idx.slice(1).map(j => { const ind = kid(kid(plist[j], 'pPr'), 'ind'); return ind ? (+(ind.getAttributeNS(W, 'left') || ind.getAttributeNS(W, 'start')) || 0) : 0; }).filter(v => v > 0).forEach(v => { cnt[v] = (cnt[v] || 0) + 1; });
+  const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0], X = best ? +best[0] : 1134;
+  idx.forEach((j, k) => { const pPr = pPrOf(plist[j]), ind = getOrMake(pPr, 'ind', PPR_ORDER), head = k === 0;
+    ['hanging', 'hangingChars', 'firstLine', 'firstLineChars', 'leftChars', 'startChars', 'start', 'end', 'endChars'].forEach(a => wdel(ind, a));
+    wset(ind, 'left', head && !inner ? 0 : X); if (head && inner) wset(ind, 'hanging', X); else wset(ind, 'firstLine', 0);
+    wset(getOrMake(pPr, 'jc', PPR_ORDER), 'val', 'left'); });
+  return idx.length;
+}
 function applyFixes(list){
   let t = src.value.replace(/\r\n?/g, '\n'), skipped = 0, done = []; const b4 = cntSev(st.issues);
   const synced = docInSync();
@@ -831,9 +863,10 @@ function applyFixes(list){
     if (!synced) { t = t.slice(0, i.start) + i.fix + t.slice(i.end); done.push(rec); return; }
     const e = trimEdit(t.slice(i.start, i.end), i.fix, i.start);
     if (e.a === e.b && e.fix === '') return;
-    if (/\n/.test(e.oldCore) || /\n/.test(e.fix) || !docEdit(e.a, e.b, e.fix)) { skipped++; return; }
+    if (/\n/.test(e.oldCore) || !docEdit(e.a, e.b, e.fix)) { skipped++; return; }
     t = t.slice(0, e.a) + e.fix + t.slice(e.b); done.push(rec);
   });
+  if (synced && done.some(r => /Gửi nhiều nơi|Đầu dòng dùng gạch ngang|Sau gạch đầu dòng/.test(r.msg)) && fixKgIndent()) done.push({ cat: 'Định dạng file', msg: 'Căn lề danh sách Kính gửi', before: 'dòng đầu và các nơi nhận thụt lệch nhau', after: 'thụt bằng nhau, thẳng hàng' });
   st.fixLog = done.reverse().concat(st.fixLog).slice(0, 300);
   src.value = t; render();
   st.recheck = { before: b4, after: cntSev(st.issues), fixed: done.length, skipped, text: t };
@@ -910,18 +943,20 @@ async function readDocx(file){
     const dd = $$(sty, 'docDefaults')[0];
     if (dd) { const rp = child(child(dd, 'rPrDefault'), 'rPr'); if (rp) { defFont = fontOf(child(rp, 'rFonts')); const s = child(rp, 'sz'); if (s) defSz = +val(s, 'val') / 2; } }
     $$(sty, 'style').forEach(s => { const id = val(s, 'styleId'); const rp = child(s, 'rPr');
-      styles[id] = { based: val(child(s, 'basedOn'), 'val'), font: rp ? fontOf(child(rp, 'rFonts')) : null, sz: rp && child(rp, 'sz') ? +val(child(rp, 'sz'), 'val') / 2 : null };
+      styles[id] = { based: val(child(s, 'basedOn'), 'val'), font: rp ? fontOf(child(rp, 'rFonts')) : null, sz: rp && child(rp, 'sz') ? +val(child(rp, 'sz'), 'val') / 2 : null,
+        b: rp && child(rp, 'b') && !/^(0|false)$/.test(val(child(rp, 'b'), 'val') || '1') ? 1 : null,
+        i: rp && child(rp, 'i') && !/^(0|false)$/.test(val(child(rp, 'i'), 'val') || '1') ? 1 : null };
       if (val(s, 'type') === 'paragraph' && s.getAttributeNS(W, 'default') === '1') defStyle = id; });
   }
   const resolve = (id, key) => { let d = 0; while (id && d++ < 6) { const s = styles[id]; if (!s) break; if (s[key]) return s[key]; id = s.based; } return null; };
   const fonts = {}, sizes = {}, bodySizes = {}; let colored = 0;
   // Văn bản + định dạng
-  const paras = $$(doc, 'p'), lines = [];
+  const paras = $$(doc, 'p'), lines = [], pinfo = [];
   for (const p of paras) {
     if (p.parentNode && p.parentNode.localName === 'txbxContent') continue;
     const pPr = child(p, 'pPr'); const ps = pPr ? val(child(pPr, 'pStyle'), 'val') : null;
     const pFont = resolve(ps || defStyle, 'font') || defFont, pSz = resolve(ps || defStyle, 'sz') || defSz;
-    let line = '';
+    let line = ''; const pa = {}; let ptot = 0, pb = 0, pit = 0;
     let inTbl = false; for (let q = p.parentNode; q; q = q.parentNode) if (q.localName === 'tc') { inTbl = true; break; }
     for (const r of $$(p, 'r')) {
       let t = '';
@@ -933,11 +968,14 @@ async function readDocx(file){
       const f = (rp && fontOf(child(rp, 'rFonts'))) || resolve(rs, 'font') || pFont || '(không xác định)';
       const sz = (rp && child(rp, 'sz') ? +val(child(rp, 'sz'), 'val') / 2 : null) || resolve(rs, 'sz') || pSz || 10;
       fonts[f] = (fonts[f] || 0) + n; sizes[sz] = (sizes[sz] || 0) + n;
+      const on = k => rp && child(rp, k) ? !/^(0|false)$/.test(val(child(rp, k), 'val') || '1') : !!(resolve(rs, k) || resolve(ps || defStyle, k));
+      ptot += n; pa[sz] = (pa[sz] || 0) + n; if (on('b')) pb += n; if (on('i')) pit += n;
       if (!inTbl) bodySizes[sz] = (bodySizes[sz] || 0) + n;
       const ce = rp ? child(rp, 'color') : null, cv = ce ? val(ce, 'val') : null;
       if (cv && !/^(auto|000000)$/i.test(cv)) colored += n;
     }
     lines.push(line);
+    pinfo.push({ sz: +(Object.entries(pa).sort((a, b) => b[1] - a[1])[0] || [0])[0], b: ptot ? pb / ptot : 0, i: ptot ? pit / ptot : 0, tot: ptot });
   }
   const text = lines.join('\n');
   const plist = paras.filter(p => !(p.parentNode && p.parentNode.localName === 'txbxContent'));
@@ -977,6 +1015,38 @@ async function readDocx(file){
   checks.push({ label: 'Cỡ chữ nội dung', status: dom && (dom < 13 || dom > 14) ? 'error' : 'ok',
     note: dom ? `Cỡ chữ chiếm nhiều nhất ở phần văn bản ngoài bảng: ${dom} pt (quy định 13–14 pt).` : 'Không xác định.' });
   if (offS.length) checks.push({ label: 'Cỡ chữ ngoài khung 11–14 pt', status: 'warn', note: offS.map(([s, n]) => `${s} pt (${Math.round(n / totS * 100)}%)`).join(', ') + '. Tên loại văn bản và tiêu đề có thể lớn hơn một chút, hãy kiểm tra lại.' });
+  // Kiểu chữ các thành phần thể thức (Phụ lục I, NĐ 30)
+  const comp = [];
+  { const fold = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toUpperCase().replace(/\s+/g, ' ').trim();
+    const f2 = lines.map(fold), nz = []; f2.forEach((t, i) => { if (t && pinfo[i] && pinfo[i].tot) nz.push(i); });
+    const TL = /^(QUYET DINH|NGHI QUYET|TO TRINH|KE HOACH|BAO CAO|THONG BAO|CHI THI|QUY CHE|QUY DINH|HUONG DAN|BIEN BAN|GIAY MOI|CHUONG TRINH|DE AN|PHUONG AN|DU AN|HOP DONG|THONG CAO|GIAY GIOI THIEU|GIAY NGHI PHEP|PHIEU GUI|PHIEU CHUYEN|PHIEU BAO|THU CONG)$/;
+    const add2 = (i, label, lo, hi, sz, b, it) => comp.push({ i, label, lo, hi, sz, b, it });
+    nz.forEach((i, k) => { const t = f2[i];
+      if (k < 40) {
+        if (/^CONG HOA XA HOI CHU NGHIA VIET NAM/.test(t)) add2(i, 'Quốc hiệu', 12, 13, 13, true, null);
+        else if (/^DOC LAP ?- ?TU DO ?- ?HANH PHUC/.test(t)) add2(i, 'Tiêu ngữ', 13, 14, 14, true, null);
+        else if (/^SO ?:/.test(t) && t.length < 60) add2(i, 'Số, ký hiệu', 13, 13, 13, false, null);
+        else if (/NGAY \d+ THANG \d+ NAM \d{4}/.test(t) && t.length < 80) add2(i, 'Địa danh, ngày tháng', 13, 14, 14, null, true);
+        else if (TL.test(t)) { add2(i, 'Tên loại văn bản', 13, 14, 14, true, null);
+          const nx = nz[k + 1]; if (nx !== undefined && !/^(CAN CU|KINH GUI|XET |THEO |DIEU |CHUONG |V\/V|\()/.test(f2[nx]) && !TL.test(f2[nx])) add2(nx, 'Trích yếu', 13, 14, 14, true, null); }
+      }
+      if (/^(TM|KT|TL|TUQ|Q)\./.test(t)) { add2(i, 'Chức vụ người ký', 13, 14, 14, true, null);
+        for (let q = k + 1, c = 0; q < nz.length && c < 2; q++, c++) { const raw = lines[nz[q]].trim(); if (raw !== raw.toUpperCase() || raw.length > 60 || !/\p{L}/u.test(raw)) break; add2(nz[q], 'Chức vụ người ký', 13, 14, 14, true, null); } }
+      if (/^NOI NHAN ?:?$/.test(t)) { add2(i, 'Chữ “Nơi nhận:”', 12, 12, 12, true, true);
+        for (let q = k + 1, c = 0; q < nz.length && c < 12; q++, c++) { const j = nz[q], raw = lines[j].trim();
+          if (/^(TM|KT|TL|TUQ)\./.test(f2[j]) || raw === raw.toUpperCase()) break;
+          add2(j, 'Danh sách nơi nhận', 11, 11, 11, false, null); if (/^-? ?LUU ?:/.test(f2[j])) break; } }
+    });
+    const grp = {};
+    comp.forEach(c => { const pi2 = pinfo[c.i], rs2 = [];
+      if (pi2.sz && (pi2.sz < c.lo - 0.01 || pi2.sz > c.hi + 0.01)) rs2.push('cỡ ' + pi2.sz + ' pt (quy định ' + (c.lo === c.hi ? c.lo : c.lo + '–' + c.hi) + ')');
+      if (c.b === true && pi2.b < 0.5) rs2.push('cần in đậm'); if (c.b === false && pi2.b >= 0.5) rs2.push('không in đậm');
+      if (c.it === true && pi2.i < 0.5) rs2.push('cần in nghiêng'); if (c.it === false && pi2.i >= 0.5) rs2.push('không in nghiêng');
+      c.bad = rs2.length > 0; const g = grp[c.label] = grp[c.label] || { n: 0, bad: 0, why: new Set(), c }; g.n++; if (c.bad) g.bad++; rs2.forEach(x => g.why.add(x)); });
+    Object.entries(grp).forEach(([label, g]) => { const c = g.c;
+      const exp = 'cỡ ' + (c.lo === c.hi ? c.lo : c.lo + '–' + c.hi) + ' pt' + (c.b === true ? ', đậm' : c.b === false ? ', không đậm' : '') + (c.it === true ? ', nghiêng' : '');
+      checks.push({ label: 'Kiểu chữ ' + label, status: g.bad ? 'error' : 'ok', note: g.bad ? g.bad + '/' + g.n + ' dòng chưa đúng: ' + [...g.why].join('; ') + '.' : 'Đúng quy định (' + exp + ').' }); });
+  }
   checks.push({ label: 'Màu chữ', status: colored === 0 ? 'ok' : (colored / totS > 0.02 ? 'error' : 'warn'), note: colored === 0 ? 'Màu đen.' : Math.max(1, Math.round(colored / totS * 100)) + '% ký tự không phải màu đen (quy định: màu đen).' });
   // Căn lề, thụt đầu dòng, khoảng cách đoạn của các đoạn văn nội dung
   const pv = x => (x == null || x === '') ? undefined : +x;
@@ -995,6 +1065,18 @@ async function readDocx(file){
     $$(sty, 'style').forEach(s => { pst[val(s, 'styleId')] = { based: val(child(s, 'basedOn'), 'val'), p: ppr(child(s, 'pPr')) }; }); }
   const presolve = id => { const chain = []; let d = 0; while (id && d++ < 6 && pst[id]) { chain.unshift(pst[id].p); id = pst[id].based; } return Object.assign({}, pDef, ...chain); };
   const inCell = p => { for (let n = p.parentNode; n; n = n.parentNode) if (n.localName === 'tc') return true; return false; };
+  // Danh sách nơi nhận sau “Kính gửi:” phải thẳng hàng
+  const kgInfo = { idx: [], bad: false };
+  { const pk = lines.findIndex(l => /^\s*Kính\s+gửi\s*[:：]/i.test(l));
+    if (pk > -1 && !inCell(plist[pk])) { const idx = [pk];
+      for (let j = pk + 1; j < plist.length; j++) { const t = (lines[j] || '').trim(); if (!t || t.length > 90 || !/^[-–—•]/.test(t) || inCell(plist[j])) break; idx.push(j); }
+      if (idx.length >= 2 || /\n\s*[-–—•]/.test(lines[pk])) { kgInfo.idx = idx;
+        const eff = q => { const pPr = child(q, 'pPr'), ps = pPr ? val(child(pPr, 'pStyle'), 'val') : null; return Object.assign({}, presolve(ps || defStyle), ppr(pPr)); };
+        const cnt = {}; idx.slice(1).map(i => eff(plist[i]).left || 0).filter(v => v > 0).forEach(v => { cnt[v] = (cnt[v] || 0) + 1; });
+        const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0], X = best ? +best[0] : 1134, inner = /\n\s*[-–—•]/.test(lines[pk]); kgInfo.X = X; kgInfo.inner = inner;
+        const okI = (i, l, f) => { const e = eff(plist[i]); return Math.abs((e.left || 0) - l) <= 30 && Math.abs((e.first || 0) - f) <= 30; };
+        kgInfo.bad = idx.some((i, k) => k === 0 ? !(inner ? okI(i, X, -X) : okI(i, 0, 0)) : !okI(i, X, 0));
+        checks.push({ label: 'Căn lề danh sách Kính gửi', status: kgInfo.bad ? 'error' : 'ok', note: kgInfo.bad ? 'Dòng đầu phải thụt bằng các nơi nhận khác, tất cả thẳng hàng với nhau.' : 'Các dòng nơi nhận thụt đều, thẳng hàng.' }); } } }
   let nb = 0, jOK = 0, iOK = 0, iKnown = 0, sOK = 0, lOK = 0, lKnown = 0;
   plist.forEach((p, i) => {
     if ((lines[i] || '').trim().length < 100 || inCell(p)) return;
@@ -1046,7 +1128,7 @@ async function readDocx(file){
   if (inH) checks.push({ label: 'Số trang', status: tp ? 'ok' : 'warn', note: tp ? 'Đặt ở lề trên, không hiện ở trang đầu.' : 'Đặt ở lề trên nhưng trang đầu vẫn hiện số; bật “Khác trang đầu”.' });
   else if (inF) checks.push({ label: 'Số trang', status: 'warn', note: 'Đang ở chân trang. NĐ 30 quy định đặt giữa lề trên (header), không hiện ở trang đầu.' });
   else checks.push({ label: 'Số trang', status: 'info', note: 'Không thấy số trang. Bỏ qua nếu văn bản chỉ một trang.' });
-  return { text, checks, doc: { zip, dom: doc, plist } };
+  return { text, checks, doc: { zip, dom: doc, plist, comp, kg: kgInfo } };
 }
 
 // ================= Sửa định dạng file Word =================
@@ -1317,8 +1399,9 @@ async function fixDocFormat(){
   const needList = bad('Thụt lề các mục nhỏ');
   const needJ = bad('Căn lề nội dung') || needList, needI = bad('Thụt đầu dòng') || needList, needS = bad('Khoảng cách giữa') || needList, needL = bad('Giãn dòng');
   let nJ = 0, nI = 0, nS = 0, nL = 0;
+  const kgP = new Set((st.doc.kg ? st.doc.kg.idx : []).map(i => plist[i]));
   if (needJ || needI || needS || needL) plist.forEach(p => {
-    if (inTable(p)) return;
+    if (inTable(p) || kgP.has(p)) return;
     const text = textOf(p), pPr = pPrOf(p), listed = !!kid(pPr, 'numPr'), isList = listed || LISTRE.test(text);
     if (text.length < 100 && !isList) return;
     const jc0 = kid(pPr, 'jc'), jv = jc0 ? jc0.getAttributeNS(W, 'val') : '';
@@ -1338,6 +1421,22 @@ async function fixDocFormat(){
   if (nI) log.push({ msg: 'Thụt đầu dòng (kể cả các mục nhỏ 1., 4.1., -)', before: nI + ' đoạn thụt lề lệch hoặc sai', after: 'thống nhất thụt đầu dòng 1 cm, các dòng sau sát lề' });
   if (nS) log.push({ msg: 'Khoảng cách giữa các đoạn', before: nS + ' đoạn cách dưới 6 pt', after: 'cách đoạn tối thiểu 6 pt' });
   if (nL) log.push({ msg: 'Giãn dòng', before: nL + ' đoạn ngoài khung đơn–1,5 lines', after: '1,3 lines' });
+  // 4b. Kiểu chữ các thành phần thể thức
+  if (bad('Kiểu chữ')) { let nK = 0;
+    (st.doc.comp || []).filter(c => c.bad).forEach(c => { const p = plist[c.i]; if (!p) return; nK++;
+      qa(p, 'r').forEach(r => { if (!qa(r, 't').length) return; const rPr = rPrOf(r);
+        wset(getOrMake(rPr, 'sz', RPR_ORDER), 'val', c.sz * 2); wset(getOrMake(rPr, 'szCs', RPR_ORDER), 'val', c.sz * 2);
+        [['b', c.b], ['i', c.it]].forEach(([k, v]) => { if (v === null) return; const e = getOrMake(rPr, k, RPR_ORDER); if (v) wdel(e, 'val'); else wset(e, 'val', '0'); }); }); });
+    if (nK) log.push({ msg: 'Kiểu chữ các thành phần thể thức', before: nK + ' dòng sai cỡ chữ, đậm hoặc nghiêng', after: 'đúng Phụ lục I, NĐ 30' }); }
+  // 4c. Danh sách nơi nhận sau “Kính gửi:” thẳng hàng sát lề trái
+  if (bad('Căn lề danh sách Kính gửi') && st.doc.kg && st.doc.kg.idx.length) { let nG = 0;
+    const kg = st.doc.kg;
+    kg.idx.forEach((i, k) => { const p = plist[i]; if (!p) return; const pPr = pPrOf(p), ind = getOrMake(pPr, 'ind', PPR_ORDER);
+      ['hanging', 'hangingChars', 'firstLine', 'firstLineChars', 'leftChars', 'startChars', 'start', 'end', 'endChars'].forEach(a => wdel(ind, a));
+      const head = k === 0, hang = head && kg.inner;
+      wset(ind, 'left', head && !kg.inner ? 0 : kg.X); if (hang) wset(ind, 'hanging', kg.X); else wset(ind, 'firstLine', 0);
+      wset(getOrMake(pPr, 'jc', PPR_ORDER), 'val', 'left'); nG++; });
+    if (nG) log.push({ msg: 'Căn lề danh sách Kính gửi', before: nG + ' đoạn thụt lề lệch nhau', after: 'các nơi nhận thụt đều, thẳng hàng' }); }
   // 5. Số trang
   if (bad('Số trang') && await fixPageNumber(zip, dom)) log.push({ msg: 'Số trang', before: 'ở chân trang hoặc hiện cả trang đầu', after: 'giữa lề trên (header), ẩn ở trang đầu' });
   return log;
